@@ -52,10 +52,10 @@ func (bn BranchNode) AddToBranch(key NodeKey, value NodeValue, currentBranchIndx
 			tempMpt := MPT{
 				Root: bn.ChildPtrs[currentBranchIndx].(NodeWithKey),
 			}
-			// go through branches until find a leaf or extension or empty space in branch
+			newios := GetIndexOfSimilarity(NodeKey{Key: key.Key[currentKeyIndx+1:]}, bn.ChildPtrs[currentBranchIndx].(NodeWithKey).GetKey())
+			tempMpt.SplitRoot(NodeKey{Key: key.Key[currentKeyIndx+1:]}, value, newios)
 
-			tempMpt.InsertKVPair(NodeKey{Key: key.Key[currentKeyIndx+1:]}, value)
-			mpt.Root.(ExtensionNode).ChildPtr.(BranchNode).ChildPtrs[currentBranchIndx] = tempMpt.Root
+			bn.ChildPtrs[currentBranchIndx] = tempMpt.Root
 		}
 	} else if reflect.TypeOf((mpt.Root.(ExtensionNode).ChildPtr)) == reflect.TypeOf(BranchNode{}) && reflect.TypeOf(bn.ParentPtr) == reflect.TypeOf(ExtensionNode{}) {
 		// split current root, but one of new children will be branch
