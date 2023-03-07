@@ -2,13 +2,14 @@ package models
 
 type Any interface{}
 
-type Prefix int
+type NodePrefix int
 
 const (
-	ExtensionEven Prefix = 0
-	ExtensionOdd  Prefix = 1
-	LeafEven      Prefix = 2
-	LeafOdd       Prefix = 3
+	ExtensionEven NodePrefix = 0
+	ExtensionOdd  NodePrefix = 1
+	LeafEven      NodePrefix = 2
+	LeafOdd       NodePrefix = 3
+	NoPrefix      NodePrefix = -1
 )
 
 type NodeType int
@@ -16,61 +17,29 @@ type NodeType int
 const (
 	Extension NodeType = 0
 	Leaf      NodeType = 1
+	Branch    NodeType = 2
 )
-
-type NodeKey struct {
-	Key string
-}
 
 type NodeValue struct {
 	Value int
 }
 
-type NodeWithKey interface {
+type TrieNode interface {
 	GetKey() NodeKey
-	GetPrefix() Prefix
-}
+	TearApartGivenKeyWithMine(NodeKey) NodeKey
+	GetLastSimilarRuneWithMyKey(NodeKey) rune
 
-type ExtensionNode struct {
-	NodePrefix Prefix
-	SharedKey  NodeKey
-	ChildPtr   Any
-	ParentPtr  Any
-}
+	GetValue() NodeValue
 
-func (en ExtensionNode) GetKey() NodeKey {
-	return en.SharedKey
-}
+	GetPrefix() NodePrefix
 
-func (en ExtensionNode) GetPrefix() Prefix {
-	return en.NodePrefix
-}
+	GetType() NodeType
 
-type BranchNode struct {
-	ChildPtrs []Any
-	Value     NodeValue
-	ParentPtr Any
-}
+	HasChildren() bool
 
-const (
-	NUM_OF_BRANCH_CHILDREN = 16
-)
-
-type LeafNode struct {
-	NodePrefix Prefix
-	KeyEnd     NodeKey
-	Value      NodeValue
-	ParentPtr  *BranchNode
-}
-
-func (ln LeafNode) GetKey() NodeKey {
-	return ln.KeyEnd
-}
-
-func (ln LeafNode) GetPrefix() Prefix {
-	return ln.NodePrefix
+	GetParent() *TrieNode
 }
 
 type MPT struct {
-	Root NodeWithKey
+	Root TrieNode
 }

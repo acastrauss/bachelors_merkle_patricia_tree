@@ -1,186 +1,121 @@
 package models
 
-import (
-	"reflect"
-	"strconv"
-)
-
-func CreateEmptyMPT() MPT {
+func CreateMPT(key NodeKey, value NodeValue) MPT {
 	return MPT{
-		Root: nil,
+		Root: LeafNode{
+			KeyEnd: key,
+			Value:  value,
+			Prefix: key.getPrefix(Leaf),
+			Parent: nil,
+		},
 	}
 }
-
-const (
-	NO_SIMILARITY = -1
-)
 
 func (mpt *MPT) InsertKVPair(key NodeKey, value NodeValue) {
-	if mpt.Root == nil {
-		mpt.Root = LeafNode{
-			NodePrefix: key.getPrefix(Leaf),
-			KeyEnd:     key,
-			Value:      value,
-			ParentPtr:  nil,
-		}
-	} else {
-		ios := GetIndexOfSimilarity(mpt.Root.GetKey(), key)
-
-		if ios == NO_SIMILARITY || key.getLength() == ios {
-			panic("Key is not for this tree")
-		}
-
-		if reflect.TypeOf(mpt.Root) == reflect.TypeOf(ExtensionNode{}) {
-			tempBranch := mpt.Root.(ExtensionNode).ChildPtr.(BranchNode)
-			branchIndx, _ := strconv.ParseInt(string(key.Key[ios+1]), 16, 32)
-			tempBranch.AddToBranch(key, value, int(branchIndx), ios+1, mpt, ios)
-			// mpt.Root.(*ExtensionNode).ChildPtr = tempBranch
-		} else {
-			mpt.SplitRoot(key, value, ios)
-		}
+	lsm := GetLastSimilarNode(mpt.Root, key)
+	if lsm.Node == nil {
+		// true only when there is 1 node in trie
+		lsm.Node = &mpt.Root
 	}
-}
 
-func (bn BranchNode) AddToBranch(key NodeKey, value NodeValue, currentBranchIndx int, currentKeyIndx int, mpt *MPT, ios int) {
-	if bn.ChildPtrs[currentBranchIndx] != nil {
+	if lastLeaf, ok := (*lsm.Node).(*LeafNode); ok {
+		// make extension from leaf, and branch as a child
+		sharedKey := lastLeaf.GetKey().getSharedKeyWithGivenKey(key)
 
-		if reflect.TypeOf(bn.ChildPtrs[currentBranchIndx]) == reflect.TypeOf(BranchNode{}) {
-			currentKeyIndx += 1
-			branchIndx, _ := strconv.ParseInt(string(key.Key[ios+currentKeyIndx]), 16, 32)
-			bn.ChildPtrs[currentBranchIndx].(BranchNode).AddToBranch(key, value, int(branchIndx), currentKeyIndx, mpt, ios)
+		newExtension := ExtensionNode{
+			SharedKey:   sharedKey,
+			Prefix:      sharedKey.getPrefix(Extension),
+			BranchChild: nil,
+			Parent:      lastLeaf.GetParent(),
+		}
+
+		newBranch := BranchNode{
+			Children: make(map[rune]*TrieNode),
+			// Parent:   &TrieNode(&newExtension),
+			Value: NodeValue{Value: 0},
+		}
+
+		*newBranch.Parent = newExtension
+		*newExtension.BranchChild = newBranch
+
+		lsnKeyLen := lastLeaf.GetKey().getLength()
+		leaf1Key := NodeKey{Key: lastLeaf.GetKey().Key[lsnKeyLen-lsm.KeyDifference.getLength():]}
+		leaf2Key := lsm.KeyDifference
+
+		*(newBranch.Children[rune(leaf1Key.Key[0])]) = LeafNode{
+			KeyEnd: NodeKey{Key: leaf1Key.Key[1:]},
+			Prefix: NodeKey{Key: leaf1Key.Key[1:]}.getPrefix(Leaf),
+			Value:  lastLeaf.Value,
+			// Parent: newBranch,
+		}
+		tempChildPtr := newBranch.Children[rune(leaf1Key.Key[0])]
+		*((*tempChildPtr).(LeafNode).Parent) = newBranch
+
+		*(newBranch.Children[rune(leaf2Key.Key[0])]) = LeafNode{
+			KeyEnd: NodeKey{Key: leaf2Key.Key[1:]},
+			Prefix: NodeKey{Key: leaf2Key.Key[1:]}.getPrefix(Leaf),
+			Value:  value,
+			// Parent: newBranch,
+		}
+
+		temp2ChildPtr := newBranch.Children[rune(leaf2Key.Key[0])]
+		*((*temp2ChildPtr).(LeafNode).Parent) = newBranch
+
+	} else if lastBranch, ok := (*lsm.Node).(*BranchNode); ok {
+		if lastBranch.IsKeyInBranch(lsm.KeyDifference) {
+			//nodeAtLastBranch := lastBranch.GetNodeAt(rune( /*last similar rune from key for indexing branch*/ ))
+			panic("Then there is node that is after branch")
 		} else {
-			tempMpt := MPT{
-				Root: bn.ChildPtrs[currentBranchIndx].(NodeWithKey),
+			newLeaf := LeafNode{
+				KeyEnd: lsm.KeyDifference,
+				Prefix: lsm.KeyDifference.getPrefix(Leaf),
+				Value:  value,
+				// Parent: lastSimilarNode.Node, // parent will be current branch
 			}
-			newios := GetIndexOfSimilarity(NodeKey{Key: key.Key[currentKeyIndx+1:]}, bn.ChildPtrs[currentBranchIndx].(NodeWithKey).GetKey())
-			tempMpt.SplitRoot(NodeKey{Key: key.Key[currentKeyIndx+1:]}, value, newios)
 
-			bn.ChildPtrs[currentBranchIndx] = tempMpt.Root
+			*newLeaf.Parent = lastBranch
+			*(lastBranch.Children[rune(lsm.KeyDifference.Key[0])]) = newLeaf
 		}
-	} else if reflect.TypeOf((mpt.Root.(ExtensionNode).ChildPtr)) == reflect.TypeOf(BranchNode{}) && reflect.TypeOf(bn.ParentPtr) == reflect.TypeOf(ExtensionNode{}) {
-		// split current root, but one of new children will be branch
-		indx, _ := strconv.ParseInt(string(mpt.Root.GetKey().Key[ios+1]), 16, 32)
-
-		mpt.SplitRootWithBranchNode(key, value, ios, bn, int(indx))
 	} else {
-		leafKey := NodeKey{
-			Key: key.Key[currentKeyIndx:],
-		}
-		newLeaf := LeafNode{
-			ParentPtr:  &bn,
-			Value:      value,
-			NodePrefix: leafKey.getPrefix(Leaf),
-			KeyEnd:     leafKey,
-		}
-		bn.ChildPtrs[currentBranchIndx] = newLeaf
+		panic("last node can not be extension")
 	}
 }
 
-func (mpt *MPT) SplitRoot(key NodeKey, value NodeValue, ios int) {
-	rootSharedKey := NodeKey{
-		Key: key.Key[0 : ios+1],
-	}
-	newRoot := ExtensionNode{
-		ParentPtr:  nil,
-		NodePrefix: rootSharedKey.getPrefix(Extension),
-		SharedKey:  rootSharedKey,
-		ChildPtr:   nil,
-	}
-
-	child1Key := NodeKey{
-		Key: key.Key[ios+2:],
-	}
-	child1 := LeafNode{
-		NodePrefix: child1Key.getPrefix(Leaf),
-		KeyEnd:     child1Key,
-		Value:      value,
-		ParentPtr:  nil,
-	}
-
-	child2Key := NodeKey{
-		Key: mpt.Root.GetKey().Key[ios+2:],
-	}
-	child2 := LeafNode{
-		NodePrefix: child2Key.getPrefix(Leaf),
-		KeyEnd:     child2Key,
-		Value:      NodeValue{Value: -1111111},
-		ParentPtr:  nil,
-	}
-
-	newBranch := BranchNode{
-		Value:     NodeValue{},
-		ParentPtr: newRoot,
-		ChildPtrs: make([]Any, NUM_OF_BRANCH_CHILDREN),
-	}
-
-	child1.ParentPtr = &newBranch
-	child2.ParentPtr = &newBranch
-
-	indx1, _ := strconv.ParseInt(string(key.Key[ios+1]), 16, 32)
-	newBranch.ChildPtrs[indx1] = child1
-	indx2, _ := strconv.ParseInt(string(mpt.Root.GetKey().Key[ios+1]), 16, 32)
-	newBranch.ChildPtrs[indx2] = child2
-
-	newBranch.ParentPtr = newRoot
-	newRoot.ChildPtr = newBranch
-
-	mpt.Root = newRoot
+type LastSimilarNode struct {
+	Node            *TrieNode
+	KeyDifference   NodeKey
+	LastSimilarRune rune
 }
 
-func (mpt *MPT) SplitRootWithBranchNode(key NodeKey, value NodeValue, ios int, bn BranchNode, indxForNewBN int) {
-	rootSharedKey := NodeKey{
-		Key: key.Key[0 : ios+1],
-	}
-	newRoot := ExtensionNode{
-		ParentPtr:  nil,
-		NodePrefix: rootSharedKey.getPrefix(Extension),
-		SharedKey:  rootSharedKey,
-		ChildPtr:   nil,
-	}
-
-	child1Key := NodeKey{
-		Key: key.Key[ios+2:],
-	}
-	child1 := LeafNode{
-		NodePrefix: child1Key.getPrefix(Leaf),
-		KeyEnd:     child1Key,
-		Value:      value,
-		ParentPtr:  nil,
-	}
-
-	newBranch := BranchNode{
-		Value:     NodeValue{},
-		ParentPtr: newRoot,
-		ChildPtrs: make([]Any, NUM_OF_BRANCH_CHILDREN),
-	}
-
-	child1.ParentPtr = &newBranch
-	bn.ParentPtr = &newBranch
-
-	indx1, _ := strconv.ParseInt(string(key.Key[ios+1]), 16, 32)
-	newBranch.ChildPtrs[indx1] = child1
-	newBranch.ChildPtrs[indxForNewBN] = bn
-
-	newBranch.ParentPtr = newRoot
-	newRoot.ChildPtr = newBranch
-
-	mpt.Root = newRoot
-}
-
-func GetIndexOfSimilarity(key1 NodeKey, key2 NodeKey) int {
-	if key1.equals(key2) {
-		panic("same keys")
-	}
-
-	indexOfSimilarity := NO_SIMILARITY
-
-	for i := 0; i < key1.getLength() && i < key2.getLength(); i++ {
-		if key1.Key[i] == key2.Key[i] {
-			indexOfSimilarity++
+func GetLastSimilarNode(nodeToCompareTo TrieNode, key NodeKey) LastSimilarNode {
+	tearedApartKey := nodeToCompareTo.TearApartGivenKeyWithMine(key)
+	if nodeToCompareTo.GetType() == Branch {
+		// compare only first element of 'key'
+		branch := nodeToCompareTo.(BranchNode)
+		if branch.IsKeyInBranch(key) {
+			return GetLastSimilarNode(*branch.GetNodeAt(rune(key.Key[0])), tearedApartKey)
 		} else {
-			break
+			return LastSimilarNode{
+				Node:            &nodeToCompareTo,
+				KeyDifference:   tearedApartKey,
+				LastSimilarRune: nodeToCompareTo.GetLastSimilarRuneWithMyKey(tearedApartKey),
+			}
+		}
+	} else {
+		if nodeToCompareTo.HasChildren() {
+			return GetLastSimilarNode(*nodeToCompareTo.(ExtensionNode).BranchChild, tearedApartKey)
+		} else {
+
+			similarNode := nodeToCompareTo
+
+			if nodeToCompareTo.GetKey().indexOfSimilarityWithGivenKey(key) == NO_SIMILARITY {
+				similarNode = *nodeToCompareTo.GetParent()
+			}
+			return LastSimilarNode{
+				Node:            &similarNode,
+				KeyDifference:   tearedApartKey,
+				LastSimilarRune: nodeToCompareTo.GetLastSimilarRuneWithMyKey(tearedApartKey),
+			}
 		}
 	}
-
-	return indexOfSimilarity
 }
